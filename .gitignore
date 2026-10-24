@@ -1,0 +1,16 @@
+# runtime artifacts — never committed
+vx-workbench/
+plugins/vx-workbench/docs/skills.md
+*.vx-original.bak
+*.bak
+
+# local build / tooling
+node_modules/
+pnpm-lock.yaml
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+# editor
+.vscode/
+.idea/

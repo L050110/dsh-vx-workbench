@@ -1,0 +1,71 @@
+{
+  "name": "dsh-vx-workbench",
+  "version": "0.1.0",
+  "description": "Visual X-Space workbench for DeepSeek Harness: repair the CAD import path so FBX/STEP/STL load, generate a factory line from parameters, and keep every installed skill catalogued so the agent never guesses a skill name.",
+  "type": "module",
+  "private": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "icon": "icon.svg",
+  "license": "MIT",
+  "author": {
+    "name": "L050110"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/L050110/dsh-vx-workbench.git"
+  },
+  "homepage": "https://github.com/L050110/dsh-vx-workbench#readme",
+  "bugs": {
+    "url": "https://github.com/L050110/dsh-vx-workbench/issues"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "visual-components",
+    "cad",
+    "factory",
+    "layout",
+    "simulation",
+    "workbench",
+    "skills",
+    "openviking"
+  ],
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "lib/*.mjs",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "docs/*.md",
+    "icon.svg"
+  ],
+  "scripts": {
+    "check": "node --check index.js && node --check client.js && node --check lib/skills.mjs && node --check lib/ov.mjs && node --check lib/patch.mjs",
+    "test": "node --test test/patch.test.mjs test/skills.test.mjs",
+    "scan": "node lib/patch.mjs scan"
+  },
+  "dsh": {
+    "engines": {
+      "dsh": ">=0.2.1-rc.2"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  }
+}

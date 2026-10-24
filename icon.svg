@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="VX factory workbench">
+  <g fill="none" stroke="currentColor" stroke-width="3" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M6 52V30l16-8 12 7v23z" />
+    <path d="M34 52V38h10l14 8v6z" />
+    <path d="M12 46h6M12 40h6" opacity="0.6" />
+    <circle cx="18" cy="54" r="4" />
+    <circle cx="46" cy="54" r="4" />
+    <path d="M42 20l6 3.5M48 20l-6 3.5" opacity="0.85" />
+    <path d="M20 13v8" opacity="0.5" />
+  </g>
+</svg>
