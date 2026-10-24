@@ -68,6 +68,15 @@ window.__ModuleLoader__.load({
       cursor: 'pointer',
     };
     const btnPrimary = { ...btn, border: '1px solid ' + C.accent, color: C.accent, fontWeight: 600 };
+    const sel = {
+      fontSize: 12,
+      padding: '4px 6px',
+      borderRadius: 6,
+      border: '1px solid ' + C.line,
+      background: 'transparent',
+      color: C.title,
+      maxWidth: 260,
+    };
 
     function Panel() {
       const [state, setState] = useState(null);
@@ -80,6 +89,8 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = useState('');
       const [showLogic, setShowLogic] = useState(false);
       const [pushArmed, setPushArmed] = useState(false);
+      const [pickSkill, setPickSkill] = useState('');
+      const [pickScope, setPickScope] = useState('vx');
       const askRef = useRef(null);
 
       const load = useCallback(() => {
@@ -117,6 +128,18 @@ window.__ModuleLoader__.load({
             return false;
           })
           .finally(() => setBusy(''));
+      };
+
+      // One dropdown + one button: no JSON, no endpoint names for the operator.
+      const applyClassify = () => {
+        const name = pickSkill;
+        if (!name) {
+          setToast('○ 先在上面选一个技能');
+          return;
+        }
+        if (pickScope === 'ignore') return post({ action: 'skill-ignore', names: [name] }, 'classify');
+        if (pickScope === 'unignore') return post({ action: 'skill-unignore', names: [name] }, 'classify');
+        post({ action: 'skill-scope', name, scope: pickScope }, 'classify');
       };
 
       const submitAsk = () => {
@@ -663,6 +686,36 @@ window.__ModuleLoader__.load({
                       },
                     },
                     '复制「写技能」指令'
+                  )
+                ),
+                h(
+                  'div',
+                  { style: { marginTop: 8, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
+                  h('span', { style: { fontSize: 11, color: C.dim } }, '归类：'),
+                  h(
+                    'select',
+                    { value: pickSkill, onChange: (e) => setPickSkill(e.target.value), style: sel },
+                    h('option', { value: '' }, '— 选技能 —'),
+                    (sk.list || [])
+                      .filter((x) => !x.ignored)
+                      .map((x) => h('option', { key: x.name, value: x.name }, (x.scope === 'vx' ? '[工作站] ' : '[其它] ') + x.name)),
+                    (sk.list || [])
+                      .filter((x) => x.ignored)
+                      .map((x) => h('option', { key: 'ign-' + x.name, value: x.name }, '[已忽略] ' + x.name))
+                  ),
+                  h(
+                    'select',
+                    { value: pickScope, onChange: (e) => setPickScope(e.target.value), style: sel },
+                    h('option', { value: 'vx' }, '归到工作站'),
+                    h('option', { value: 'other' }, '归到其它'),
+                    h('option', { value: 'ignore' }, '忽略（隐藏，不删文件）'),
+                    h('option', { value: 'unignore' }, '取消忽略'),
+                    h('option', { value: 'auto' }, '恢复自动判定')
+                  ),
+                  h(
+                    'button',
+                    { style: { ...btn, padding: '4px 12px' }, disabled: busy === 'classify', onClick: applyClassify },
+                    busy === 'classify' ? '处理中…' : '归类'
                   )
                 ),
                 (sk.list || []).length
