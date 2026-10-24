@@ -4,7 +4,7 @@
 // 3) asset list + "reveal in explorer"
 // 4) work log, and "ask" — pushes a real user message into the live session
 // 5) ships docs/logic.md so the panel can explain how the crack and the workflow work
-import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync, readdirSync, statSync, copyFileSync, renameSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
@@ -16,13 +16,11 @@ import { plan as planPatch } from './lib/patch.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = 'vx-workbench';
-// Every path is overridable and nothing personal ships as a default. With no
-// configuration the panel reports "未配置" instead of guessing a directory.
-const INSTALL_DIR = (process.env.VX_INSTALL_DIR || 'C:\\Program Files\\HANDI\\Visual X-Space 4.8').trim();
+const INSTALL_DIR = 'C:\\Program Files\\HANDI\\Visual X-Space 4.8';
 const HOOPS_DLL = join(INSTALL_DIR, 'VisualComponents.HOOPS.dll');
-const REPAIR_DIR = (process.env.VX_REPAIR_DIR || '').trim(); // install.ps1 / restore.ps1 所在目录（可选）
-const DELIVERY_DIR = (process.env.VX_DELIVERY_DIR || '').trim(); // .vcmx 交付目录（可选）
-const DESKTOP_DIR = process.env.USERPROFILE ? join(process.env.USERPROFILE, 'Desktop') : '';
+const CRACK_DIR = 'C:\\Users\\lenovo\\Desktop\\VisualXSpace48_Crack_v3.0_HOOPS';
+const DELIVERY_DIR = 'C:\\Users\\lenovo\\Desktop\\SU7_工厂交付';
+const DESKTOP_DIR = 'C:\\Users\\lenovo\\Desktop';
 const PATCH_OFFSET = 173095;
 const ASM_KEY = 'VisualComponents.HOOPS,31bc53bc7503b77a';
 const SKILL_SCAN_MS = 5 * 60 * 1000; // auto-scan cadence for the skill ledger
@@ -172,6 +170,7 @@ function rootsFor(workspaceRoot) {
     profileDir: process.env.DSH_PROFILE_DIR || '',
     workspaceRoot,
     dshRoot: dshRootDir(),
+    pluginDir: HERE,
   });
 }
 
@@ -261,9 +260,12 @@ async function scanAndPersist(ctx, opts) {
   const dir = join(workspaceRoot, DATA_DIR);
   const prev = readSkillsState(dir);
   const roots = rootsFor(workspaceRoot);
-  const scan = scanSkills(roots);
+  const scan = scanSkills(roots, { pluginSkillsRoot: join(HERE, 'skills') });
   const ov = await collectOv(dir);
   const merged = scan.skills.concat(ov.skills || []);
+  const ignoredNames = readIgnore(dir);
+  const ignoredSet = new Set(ignoredNames.map((n) => n.toLowerCase()));
+  for (const s of merged) s.ignored = ignoredSet.has(String(s.name || '').toLowerCase());
   const diff = diffSkills(prev && prev.skills, merged);
   const autoNotify =
     opts && typeof opts.autoNotify === 'boolean' ? opts.autoNotify : !!(prev && prev.autoNotify === true);
@@ -295,6 +297,11 @@ async function scanAndPersist(ctx, opts) {
     },
     ledgerPath: join(HERE, 'docs', 'skills.md'),
     autoNotify,
+    ignored: {
+      count: merged.filter((s) => s.ignored).length,
+      names: ignoredNames,
+    },
+    deleteRequests: pendingRequests(dir).map((r) => ({ id: r.id, name: r.name, reason: r.reason, at: r.at })),
   };
 
   try {
@@ -346,7 +353,63 @@ function skillsNotice(s) {
   return (head + tail).slice(0, 3500);
 }
 
-// ------------------------------------------------------- session fan-out
+// ---------------------------------------------------------------- skill governance
+// Sessions may propose knowledge, but they may not silently delete it:
+//   add / update  -> written into the plugin's own skills/ with a backup
+//   delete        -> queued as a request; only the operator resolves it
+//   irrelevant    -> ignored (hidden from the ledger), never physically removed
+const SKILL_NAME_RE = /^[a-z0-9][a-z0-9-]{1,62}$/;
+
+const ignorePath = (dir) => join(dir, 'skill-ignore.json');
+const requestsPath = (dir) => join(dir, 'skill-requests.jsonl');
+const backupDir = (dir) => join(dir, 'backup', 'skills');
+const trashDir = (dir) => join(dir, 'trash', 'skills');
+
+function readIgnore(dir) {
+  try {
+    const j = JSON.parse(readFileSync(ignorePath(dir), 'utf8'));
+    return Array.isArray(j && j.names) ? j.names.map(String) : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function writeIgnore(dir, names) {
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  const clean = Array.from(new Set((names || []).map((n) => String(n).trim()).filter(Boolean))).sort();
+  writeFileSync(ignorePath(dir), JSON.stringify({ updatedAt: new Date().toISOString(), names: clean }, null, 2), 'utf8');
+  return clean;
+}
+
+// Pending delete requests = ids whose latest record has no decision yet.
+function pendingRequests(dir) {
+  const rows = readJsonl(requestsPath(dir), 400);
+  const byId = new Map();
+  for (const r of rows) {
+    if (!r || !r.id) continue;
+    const prev = byId.get(r.id);
+    if (!prev) byId.set(r.id, r);
+    else if (r.decision) byId.set(r.id, { ...prev, decision: r.decision, decidedAt: r.at });
+  }
+  return Array.from(byId.values()).filter((r) => !r.decision);
+}
+
+function skillFilePath(name) {
+  return join(HERE, 'skills', name, 'SKILL.md');
+}
+
+function composeSkill(name, description, body) {
+  const clean = String(body || '').replace(/\r\n/g, '\n').trim();
+  return ['---', 'name: ' + name, 'description: ' + String(description || '').replace(/\n/g, ' ').trim(), '---', '', clean, ''].join('\n');
+}
+
+function validateSkill(name, description, body) {
+  if (!SKILL_NAME_RE.test(String(name || ''))) return '技能名要小写字母/数字/连字符，2-63 字符（例如 vx-new-trick）';
+  const d = String(description || '').trim();
+  if (d.length < 20 || d.length > 400) return 'description 要 20-400 字符，写清「什么时候用」';
+  if (String(body || '').trim().length < 80) return '正文太短（至少 80 字符）——只写踩过的具体操作，不写空话';
+  return '';
+}
 
 function targetable(items) {
   return (items || []).filter((i) => i && i.origin !== 'subagent' && i.blank !== true);
@@ -444,8 +507,8 @@ function buildHandoff(st) {
     '【交接简报 · 自动生成，供新会话直接接手】',
     '工作目录：' + (st.dataDir || '').replace(/\\vx-workbench$/, ''),
     '数据目录：' + (st.dataDir || '') + '（status.json / requests.jsonl / log.jsonl，可直接用 node 读）',
-    '修复包：' + (st.repairDir || '（未配置 VX_REPAIR_DIR）') + '（install.ps1 / restore.ps1，需要管理员 + UAC）',
-    '补丁现状：dll=' + d.state + ' byte=' + d.byte + ' | 加载链修复=' + (sn.verificationRegistered && sn.allowBypassSet),
+    '破解包：' + (st.crackDir || '') + '（install.ps1 / restore.ps1，安装需管理员 + UAC）',
+    '补丁现状：dll=' + d.state + ' byte=' + d.byte + ' | 强名称免验证=' + sn.verificationRegistered + ' | AllowStrongNameBypass=' + sn.allowBypassSet,
     '厂房资产：' + names,
     '技能台账：' + (st.skills ? st.skills.count + ' 个技能（digest ' + String(st.skills.digest || '').slice(0, 8) + '）→ ' + st.skills.ledgerPath : '（尚未扫描，面板点“立即扫描”）'),
     'OpenViking 技能：' + (st.skills && st.skills.ov ? (st.skills.ov.count || 0) + ' 个（状态 ' + st.skills.ov.status + '）' : '（未知）') +
@@ -538,15 +601,13 @@ async function collectStatus(ctx) {
   const regBypass = await run('reg', ['query', 'HKLM\\SOFTWARE\\Microsoft\\.NETFramework', '/v', 'AllowStrongNameBypass']);
   const procs = await run('tasklist', ['/FI', 'IMAGENAME eq VisualComponents.Engine.exe', '/FO', 'CSV', '/NH']);
 
-  const backupPath = REPAIR_DIR
-    ? join(REPAIR_DIR, 'backup_原版\\VisualComponents.HOOPS.dll')
-    : HOOPS_DLL + '.vx-original.bak';
+  const backupPath = join(CRACK_DIR, 'backup_原版\\VisualComponents.HOOPS.dll');
 
   const status = {
     generatedAt: new Date().toISOString(),
     dataDir: dir,
     installDir: INSTALL_DIR,
-    repairDir: REPAIR_DIR,
+    crackDir: CRACK_DIR,
     deliveryDir: DELIVERY_DIR,
     dll: {
       path: HOOPS_DLL,
@@ -591,13 +652,19 @@ async function collectStatus(ctx) {
         ledgerPath: sk.ledgerPath || '',
         watched: (sk.roots || []).length,
         ov: sk.ov || null,
-        list: (sk.skills || []).slice(0, 60).map((s) => ({
+        list: (sk.skills || []).slice(0, 80).map((s) => ({
           name: s.name,
           desc: String(s.description || '').slice(0, 130),
           root: s.root || s.rootUri || '',
           source: s.source || 'fs',
+          scope: s.scope || 'other',
+          ignored: s.ignored === true,
           fp: String(s.fingerprint || '').slice(0, 8),
         })),
+        vxCount: (sk.skills || []).filter((s) => s.scope === 'vx' && !s.ignored).length,
+        otherCount: (sk.skills || []).filter((s) => s.scope !== 'vx' && !s.ignored).length,
+        ignoredCount: (sk.ignored && sk.ignored.count) || 0,
+        pending: sk.deleteRequests || [],
       };
     })(),
   };
@@ -645,7 +712,7 @@ export function apply(ctx) {
     try {
       const child = execFile(
         'powershell',
-        ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(REPAIR_DIR, scriptFile)],
+        ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(CRACK_DIR, scriptFile)],
         { windowsHide: false, detached: true },
         () => {}
       );
@@ -717,8 +784,7 @@ export function apply(ctx) {
 
           if (action === 'install' || action === 'restore') {
             const script = action === 'install' ? 'install.ps1' : 'restore.ps1';
-            if (!REPAIR_DIR) return send(res, 400, { ok: false, error: '未配置修复包目录：设置环境变量 VX_REPAIR_DIR 后重启 DSH' });
-            if (!existsSync(join(REPAIR_DIR, script))) return send(res, 400, { ok: false, error: '找不到 ' + script });
+            if (!existsSync(join(CRACK_DIR, script))) return send(res, 400, { ok: false, error: '找不到 ' + script });
             const launched = spawnPs(script);
             appendJsonl(dir, 'log.jsonl', {
               at: new Date().toISOString(),
@@ -729,10 +795,7 @@ export function apply(ctx) {
           }
 
           if (action === 'open-install') return send(res, 200, { ok: openPath(INSTALL_DIR) });
-          if (action === 'open-repair') {
-            if (!REPAIR_DIR) return send(res, 400, { ok: false, error: '未配置 VX_REPAIR_DIR' });
-            return send(res, 200, { ok: openPath(REPAIR_DIR) });
-          }
+          if (action === 'open-crack') return send(res, 200, { ok: openPath(CRACK_DIR) });
           if (action === 'open-delivery') return send(res, 200, { ok: openPath(DELIVERY_DIR) });
 
           if (action === 'open-file') {
@@ -917,6 +980,128 @@ export function apply(ctx) {
               ov: ovs,
               note:
                 'OpenViking：' + ovs.status + (ovs.count ? ' · ' + ovs.count + ' 个技能' : '') + (ovs.error ? ' · ' + ovs.error : ''),
+            });
+          }
+
+          // ---- skill governance: sessions may add knowledge, never silently delete it
+          if (action === 'skill-add' || action === 'skill-update') {
+            const name = String(msg.name || '').trim();
+            const isUpdate = action === 'skill-update';
+            const file = skillFilePath(name);
+            const exists = existsSync(file);
+            if (!SKILL_NAME_RE.test(name)) {
+              return send(res, 400, { ok: false, error: '技能名要小写字母/数字/连字符，2-63 字符，例如 vx-new-trick' });
+            }
+            if (isUpdate && !exists) return send(res, 404, { ok: false, error: '技能不存在：' + name });
+            if (!isUpdate && exists) return send(res, 409, { ok: false, error: '技能已存在，改用 skill-update：' + name });
+            const description = String(msg.description || '');
+            const body = String(msg.body || msg.content || '');
+            const bad = validateSkill(name, description, body);
+            if (bad) return send(res, 400, { ok: false, error: bad });
+            if (exists) {
+              try {
+                if (!existsSync(backupDir(dir))) mkdirSync(backupDir(dir), { recursive: true });
+                copyFileSync(file, join(backupDir(dir), name + '-' + Date.now() + '.md'));
+              } catch (e) {}
+            }
+            try {
+              mkdirSync(join(HERE, 'skills', name), { recursive: true });
+              writeFileSync(file, composeSkill(name, description, body), 'utf8');
+            } catch (e) {
+              return send(res, 500, { ok: false, error: '写入失败：' + errText(e) });
+            }
+            const s = await scanAndPersist(ctx);
+            appendJsonl(dir, 'log.jsonl', {
+              at: new Date().toISOString(),
+              kind: isUpdate ? 'skill-update' : 'skill-add',
+              text: name + ' — ' + description.slice(0, 140),
+            });
+            return send(res, 200, {
+              ok: true,
+              name,
+              path: file,
+              vxCount: (s.skills || []).filter((x) => x.scope === 'vx' && !x.ignored).length,
+              note: (isUpdate ? '已更新技能：' : '已写入新技能：') + name,
+            });
+          }
+
+          if (action === 'skill-request-delete') {
+            const name = String(msg.name || '').trim();
+            const reason = String(msg.reason || '').trim();
+            if (!SKILL_NAME_RE.test(name)) return send(res, 400, { ok: false, error: '非法技能名' });
+            if (reason.length < 10) return send(res, 400, { ok: false, error: '请写清为什么该删（≥10 字，例如实测报错、已被替代）' });
+            const id = 'req-' + Date.now().toString(36);
+            appendJsonl(dir, 'skill-requests.jsonl', { id, at: new Date().toISOString(), kind: 'delete', name, reason });
+            appendJsonl(dir, 'log.jsonl', {
+              at: new Date().toISOString(),
+              kind: 'skill-request-delete',
+              text: name + ' — ' + reason.slice(0, 120),
+            });
+            return send(res, 200, { ok: true, id, note: '已提交删除申请，待你在面板批准：' + name });
+          }
+
+          if (action === 'skill-resolve') {
+            const id = String(msg.id || '');
+            const decision = String(msg.decision || '');
+            if (!id || (decision !== 'accept' && decision !== 'reject')) {
+              return send(res, 400, { ok: false, error: '需要 id 与 decision=accept|reject' });
+            }
+            const pending = pendingRequests(dir).find((r) => r.id === id);
+            if (!pending) return send(res, 404, { ok: false, error: '没有这个待处理申请：' + id });
+            if (decision === 'accept') {
+              const srcDir = join(HERE, 'skills', pending.name);
+              if (existsSync(srcDir)) {
+                const dst = join(trashDir(dir), pending.name + '-' + Date.now());
+                try {
+                  mkdirSync(dirname(dst), { recursive: true });
+                  renameSync(srcDir, dst);
+                } catch (e) {
+                  return send(res, 500, { ok: false, error: '移入回收站失败：' + errText(e) });
+                }
+              }
+            }
+            appendJsonl(dir, 'skill-requests.jsonl', { id, at: new Date().toISOString(), decision });
+            await scanAndPersist(ctx);
+            return send(res, 200, {
+              ok: true,
+              id,
+              decision,
+              note: decision === 'accept' ? '已删除并移入回收站：' + pending.name : '已驳回，技能保留：' + pending.name,
+            });
+          }
+
+          if (action === 'skill-ignore' || action === 'skill-unignore') {
+            const names = Array.isArray(msg.names) ? msg.names.map(String) : msg.name ? [String(msg.name)] : [];
+            const cur = readIgnore(dir);
+            let next;
+            if (action === 'skill-ignore') {
+              if (msg.all === true) {
+                const st = readSkillsState(dir);
+                const others = ((st && st.skills) || [])
+                  .filter((s) => s.scope !== 'vx' && (s.source || 'fs') === 'fs')
+                  .map((s) => s.name);
+                next = cur.concat(others);
+              } else {
+                next = cur.concat(names);
+              }
+            } else if (msg.all === true) {
+              next = [];
+            } else {
+              const drop = new Set(names.map((n) => n.toLowerCase()));
+              next = cur.filter((n) => !drop.has(n.toLowerCase()));
+            }
+            const saved = writeIgnore(dir, next);
+            await scanAndPersist(ctx);
+            appendJsonl(dir, 'log.jsonl', {
+              at: new Date().toISOString(),
+              kind: action,
+              text: '忽略名单现在 ' + saved.length + ' 个',
+            });
+            return send(res, 200, {
+              ok: true,
+              ignored: saved,
+              count: saved.length,
+              note: action === 'skill-ignore' ? '已忽略 ' + saved.length + ' 个无关技能（不删文件，可随时恢复）' : '忽略名单现在 ' + saved.length + ' 个',
             });
           }
 

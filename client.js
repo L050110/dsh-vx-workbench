@@ -184,6 +184,12 @@ window.__ModuleLoader__.load({
       const sk = state.skills || null;
       const ov = (sk && sk.ov) || null;
       const ovBad = ov && ov.status !== 'live' && ov.status !== 'snapshot';
+      const skWriteHint =
+        '请用工作站协议写技能（先读 plugins/vx-workbench/skills/vx-skill-authoring/SKILL.md）：\n' +
+        'POST http://127.0.0.1:63536/vxwb {"action":"skill-add","name":"vx-xxx","description":"Use when …（20-400字）","body":"# 标题\\n\\n## 症状\\n…\\n\\n## 做法\\n1. …\\n\\n## 验收\\n…"}\n' +
+        '已有技能要改：{"action":"skill-update","name":"…","description":"…","body":"<完整正文>"}\n' +
+        '不好用/有 bug：{"action":"skill-request-delete","name":"…","reason":"实测报错或已被谁取代"}\n' +
+        '无关技能清出去：{"action":"skill-ignore","all":true}（只隐藏不删）';
       const skAdded = (sk && sk.added) || [];
       const skChanged = (sk && sk.changed) || [];
       const skRemoved = (sk && sk.removed) || [];
@@ -446,7 +452,7 @@ window.__ModuleLoader__.load({
             h('button', { style: btn, disabled: busy === 'install', onClick: () => post({ action: 'install' }, 'install') }, busy === 'install' ? '启动中…' : '安装 / 修复补丁'),
             h('button', { style: btn, onClick: () => post({ action: 'restore' }, 'restore') }, '还原为原版'),
             h('button', { style: btn, onClick: () => post({ action: 'open-install' }) }, '打开安装目录'),
-            h('button', { style: btn, onClick: () => post({ action: 'open-repair' }) }, '打开修复包目录'),
+            h('button', { style: btn, onClick: () => post({ action: 'open-crack' }) }, '打开破解包'),
             h('button', { style: btn, onClick: () => post({ action: 'open-delivery' }) }, '打开交付目录')
           ),
           h('div', { style: { fontSize: 11, color: C.dim, marginTop: 10 } }, '安装/还原会弹出 UAC，点“是”后脚本自动备份、关掉 VC、写入并校验。')
@@ -493,7 +499,8 @@ window.__ModuleLoader__.load({
                 h(
                   'div',
                   { style: { display: 'flex', gap: 14, marginBottom: 10, flexWrap: 'wrap', alignItems: 'baseline' } },
-                  h('span', { style: { fontSize: 15, fontWeight: 600, color: C.title } }, sk.count + ' 个技能'),
+                  h('span', { style: { fontSize: 15, fontWeight: 600, color: C.accent } }, '工作站技能 ' + (sk.vxCount || 0)),
+                  h('span', { style: { fontSize: 12, color: C.dim } }, '其它全局 ' + (sk.otherCount || 0) + ' 个（仅登记）'),
                   h('span', { style: { fontSize: 12, color: C.dim } }, 'digest ' + String(sk.digest || '').slice(0, 10)),
                   h('span', { style: { fontSize: 12, color: C.dim } }, '监控 ' + sk.watched + ' 个根目录'),
                   sk.autoNotify ? h('span', { style: { fontSize: 11, color: C.accent } }, '自动通知：开') : null
@@ -618,11 +625,56 @@ window.__ModuleLoader__.load({
                       ov.instruction
                     )
                   : null,
+                (sk.pending || []).length
+                  ? h(
+                      'div',
+                      { style: { marginTop: 10, borderTop: '1px solid ' + C.line, paddingTop: 10 } },
+                      h('div', { style: { fontSize: 12, color: C.warn, marginBottom: 6 } }, '待批准的删除申请 ' + (sk.pending || []).length + ' 条'),
+                      (sk.pending || []).map((r) =>
+                        h(
+                          'div',
+                          { key: r.id, style: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, padding: '3px 0' } },
+                          h('span', { style: { flex: 1, color: C.title, wordBreak: 'break-all' } }, '`' + r.name + '` — ' + String(r.reason || '').slice(0, 90)),
+                          h('button', { style: { ...btn, padding: '3px 9px' }, onClick: () => post({ action: 'skill-resolve', id: r.id, decision: 'accept' }, 'skill-resolve') }, '批准删除'),
+                          h('button', { style: { ...btn, padding: '3px 9px' }, onClick: () => post({ action: 'skill-resolve', id: r.id, decision: 'reject' }, 'skill-resolve') }, '驳回')
+                        )
+                      )
+                    )
+                  : null,
+                h(
+                  'div',
+                  { style: { marginTop: 8, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
+                  h('span', { style: { fontSize: 11, color: C.dim } }, '无关技能：已忽略 ' + (sk.ignoredCount || 0) + ' 个'),
+                  h('button', { style: { ...btn, padding: '3px 9px' }, onClick: () => post({ action: 'skill-ignore', all: true }, 'skill-ignore') }, '忽略全部无关'),
+                  h('button', { style: { ...btn, padding: '3px 9px' }, onClick: () => post({ action: 'skill-unignore', all: true }, 'skill-unignore') }, '恢复全部'),
+                  h(
+                    'button',
+                    {
+                      style: { ...btn, padding: '3px 9px' },
+                      onClick: () => {
+                        try {
+                          navigator.clipboard.writeText(skWriteHint).then(
+                            () => setToast('● 「写技能」协议已复制，粘到任一对话即可让它自己写'),
+                            () => setToast('○ 复制被拦，手动看台账末尾的用法')
+                          );
+                        } catch (e) {
+                          setToast('○ 复制不可用');
+                        }
+                      },
+                    },
+                    '复制「写技能」指令'
+                  )
+                ),
                 (sk.list || []).length
                   ? h(
                       'div',
                       { style: { fontSize: 11, color: C.dim, marginTop: 8, lineHeight: 1.75, wordBreak: 'break-all' } },
-                      (sk.list || []).map((x) => x.name).join(' · ')
+                      h(
+                        'span',
+                        { style: { color: C.title } },
+                        (sk.list || []).filter((x) => x.scope === 'vx').map((x) => x.name).join(' · ') || '（没有工作站技能）'
+                      ),
+                      h('span', null, ' ｜ 其它全局 ' + (sk.otherCount || 0) + ' 个见台账')
                     )
                   : null
               )
@@ -691,7 +743,7 @@ window.__ModuleLoader__.load({
       apply(ctx) {
         ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: 'vx-workbench' }, Panel));
         ctx.slots.inject('sidebar.panellist', () =>
-          ctx.slots.register({ name: 'sidebar.panellist', id: 'vx-workbench', order: 60, label: 'VX 工作台 v0.3.0' }, Icon)
+          ctx.slots.register({ name: 'sidebar.panellist', id: 'vx-workbench', order: 60, label: 'VX 工作台 v0.4.0' }, Icon)
         );
       },
     };

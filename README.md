@@ -25,6 +25,13 @@ skill name again.
   each `SKILL.md` on disk (plus OpenViking's `viking://` skills when available),
   rewrites `docs/skills.md`, and records what was added, changed or removed. One
   click pushes a compact change notice into the conversations you already have open.
+- **Skills that grow on their own** — the ledger separates *this workbench's* skills
+  (`.vcmx` / CAD / bridge operations) from unrelated global skills, which are listed
+  but never mixed in. A session can write a new workbench skill through
+  `POST /vxwb {"action":"skill-add",…}`; a broken one is not deleted by the model but
+  queued as a delete request for you to approve (the folder moves to
+  `vx-workbench/trash/skills/`, so it stays recoverable). Irrelevant global skills are
+  hidden via `{"action":"skill-ignore","all":true}` without touching their files.
 
 | Panel | Ask channel | Plant result |
 |---|---|---|

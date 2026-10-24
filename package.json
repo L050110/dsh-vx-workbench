@@ -1,6 +1,6 @@
 {
   "name": "dsh-vx-workbench",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Visual X-Space workbench for DeepSeek Harness: repair the CAD import path so FBX/STEP/STL load, keep every installed skill catalogued so the agent never guesses a skill name, and list the factory assets you are working on.",
   "type": "module",
   "private": false,
@@ -46,6 +46,7 @@
     "index.js",
     "client.js",
     "lib/*.mjs",
+    "skills/*/SKILL.md",
     "cordis.patch.yml",
     "locale/*.json",
     "docs/*.md",
