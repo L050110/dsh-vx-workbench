@@ -266,6 +266,7 @@ async function scanAndPersist(ctx, opts) {
   const ignoredNames = readIgnore(dir);
   const ignoredSet = new Set(ignoredNames.map((n) => n.toLowerCase()));
   for (const s of merged) s.ignored = ignoredSet.has(String(s.name || '').toLowerCase());
+  applyScopeOverrides(merged, readScope(dir));
   const diff = diffSkills(prev && prev.skills, merged);
   const autoNotify =
     opts && typeof opts.autoNotify === 'boolean' ? opts.autoNotify : !!(prev && prev.autoNotify === true);
@@ -361,9 +362,41 @@ function skillsNotice(s) {
 const SKILL_NAME_RE = /^[a-z0-9][a-z0-9-]{1,62}$/;
 
 const ignorePath = (dir) => join(dir, 'skill-ignore.json');
+const scopePath = (dir) => join(dir, 'skill-scope.json');
 const requestsPath = (dir) => join(dir, 'skill-requests.jsonl');
 const backupDir = (dir) => join(dir, 'backup', 'skills');
 const trashDir = (dir) => join(dir, 'trash', 'skills');
+
+// Keyword classification is a guess; this file lets the operator override it per
+// skill name, which beats widening the regex until it also catches noise.
+function readScope(dir) {
+  try {
+    const j = JSON.parse(readFileSync(scopePath(dir), 'utf8'));
+    const vx = Array.isArray(j && j.vx) ? j.vx.map(String) : [];
+    const other = Array.isArray(j && j.other) ? j.other.map(String) : [];
+    return { vx, other };
+  } catch (e) {
+    return { vx: [], other: [] };
+  }
+}
+
+function writeScope(dir, scope) {
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  const clean = (list) => Array.from(new Set((list || []).map((n) => String(n).trim()).filter(Boolean))).sort();
+  const next = { updatedAt: new Date().toISOString(), vx: clean(scope.vx), other: clean(scope.other) };
+  writeFileSync(scopePath(dir), JSON.stringify(next, null, 2), 'utf8');
+  return next;
+}
+
+function applyScopeOverrides(skills, scope) {
+  const vx = new Set((scope.vx || []).map((n) => n.toLowerCase()));
+  const other = new Set((scope.other || []).map((n) => n.toLowerCase()));
+  for (const s of skills || []) {
+    const n = String(s.name || '').toLowerCase();
+    if (vx.has(n)) s.scope = 'vx';
+    else if (other.has(n)) s.scope = 'other';
+  }
+}
 
 function readIgnore(dir) {
   try {
@@ -1102,6 +1135,32 @@ export function apply(ctx) {
               ignored: saved,
               count: saved.length,
               note: action === 'skill-ignore' ? '已忽略 ' + saved.length + ' 个无关技能（不删文件，可随时恢复）' : '忽略名单现在 ' + saved.length + ' 个',
+            });
+          }
+
+          // ---- force one skill into a bucket when keyword classification guesses wrong
+          if (action === 'skill-scope') {
+            const name = String(msg.name || '').trim();
+            const scope = String(msg.scope || '').trim();
+            if (!name) return send(res, 400, { ok: false, error: '需要 name' });
+            if (scope !== 'vx' && scope !== 'other' && scope !== 'auto') {
+              return send(res, 400, { ok: false, error: 'scope 只能是 vx / other / auto（auto=回到按关键词判定）' });
+            }
+            const cur = readScope(dir);
+            const lower = name.toLowerCase();
+            cur.vx = (cur.vx || []).filter((n) => n.toLowerCase() !== lower);
+            cur.other = (cur.other || []).filter((n) => n.toLowerCase() !== lower);
+            if (scope === 'vx') cur.vx.push(name);
+            else if (scope === 'other') cur.other.push(name);
+            const saved = writeScope(dir, cur);
+            const s = await scanAndPersist(ctx);
+            appendJsonl(dir, 'log.jsonl', { at: new Date().toISOString(), kind: 'skill-scope', text: name + ' -> ' + scope });
+            return send(res, 200, {
+              ok: true,
+              scope: saved,
+              vxCount: (s.skills || []).filter((x) => x.scope === 'vx' && !x.ignored).length,
+              otherCount: (s.skills || []).filter((x) => x.scope !== 'vx' && !x.ignored).length,
+              note: '已把 ' + name + ' 归到 ' + scope,
             });
           }
 
