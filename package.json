@@ -1,7 +1,7 @@
 {
   "name": "dsh-vx-workbench",
   "version": "0.1.0",
-  "description": "Visual X-Space workbench for DeepSeek Harness: repair the CAD import path so FBX/STEP/STL load, generate a factory line from parameters, and keep every installed skill catalogued so the agent never guesses a skill name.",
+  "description": "Visual X-Space workbench for DeepSeek Harness: repair the CAD import path so FBX/STEP/STL load, keep every installed skill catalogued so the agent never guesses a skill name, and list the factory assets you are working on.",
   "type": "module",
   "private": false,
   "publishConfig": {

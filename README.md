@@ -18,9 +18,9 @@ skill name again.
   shape (not by a fixed file offset), patches it, verifies the byte on read-back, and
   keeps a restorable original next to it. A different build reports *"this build is
   not supported yet"* instead of silently doing nothing.
-- **Factory layout, from parameters** — line length, stations, takt, robots and AGVs
-  drive a generated instruction pack for the local automation channel, instead of
-  hand-placing every component.
+- **Factory asset panel** — every `.vcmx` layout in your delivery folder, with size,
+  timestamp and a reveal button. The parameterised line generator is a roadmap item
+  below and is not claimed here as shipped.
 - **A skill ledger that maintains itself** — every 5 minutes the plugin fingerprints
   each `SKILL.md` on disk (plus OpenViking's `viking://` skills when available),
   rewrites `docs/skills.md`, and records what was added, changed or removed. One
